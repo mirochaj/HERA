@@ -19,8 +19,8 @@ from mpl_toolkits.mplot3d import Axes3D
 
 
 
-def HMF_PCA(z_refined = 6, m_refined = 5, low = 142, 
-            high = 470, plot = False, trunc = 30):
+def HMF_PCA(z_refined = 5, m_refined = 5, low = 142, 
+            high = 450, plot = False, trunc = 30):
     ''' 
     This Function creates a PCA for 3000 HMF created with the 
     fitting functions Press-Schechter, Sheth-Mo-Tormen, Tinker. 
