@@ -10,17 +10,76 @@ Halo Mass Function fitting functions.
      
 """
 
+import time
+import ares
 import numpy as np
 import h5py
 import scipy.interpolate as sci
 import matplotlib.pyplot as pl
-import scipy.integrate as scig
-from mpl_toolkits.mplot3d import Axes3D
 
+def generate_all_hmf_tables(hmf_model='ST', hmf_path=None,
+    cosmology_ids=(0, 100), cosmology_name='planck_TTTEEE_lowl_lowE',
+    hmf_zmin=5, hmf_zmax=30, hmf_dz=0.05,
+    hmf_logMmin=7, hmf_logMmax=17, hmf_dlogM=0.1):
+    """
+    Just a wrapper around `generate_hmf_table`.
+    
+    Will create HMF tables over range of cosmology_ids.
+    """
 
+    for i in range(*cosmology_ids):
+        generate_hmf_table(hmf_model=hmf_model, hmf_path=path,
+            cosmology_id=i, cosmology_name=cosmology_name,
+            hmf_zmin=hmf_zmin, hmf_zmax=hmf_zmax, 
+            hmf_dz=hmf_dz, hmf_logMmin=hmf_logMmin, 
+            hmf_logMmax=hmf_logMmax, hmf_dlogM=hmf_dlogM)
 
-def HMF_PCA(z_refined = 5, m_refined = 5, low = 142, 
-            high = 450, plot = False, trunc = 30):
+def generate_hmf_table(hmf_model='ST', hmf_path=None,
+    cosmology_id=0, cosmology_name='planck_TTTEEE_lowl_lowE',
+    hmf_zmin=5, hmf_zmax=30, hmf_dz=0.05,
+    hmf_logMmin=7, hmf_logMmax=17, hmf_dlogM=0.1):
+    """
+    Generate HMF table for given redshift/mass resolution.
+    """
+
+    kwargs = \
+    {
+     "hmf_path": hmf_path,
+     "hmf_model": hmf_model,
+     "hmf_logMmin": hmf_logMmin,
+     "hmf_logMmax": hmf_logMmax,
+     "hmf_dlogM": hmf_dlogM,
+ 
+     "hmf_fmt": 'hdf5',
+
+     # Redshift sampling
+     "hmf_zmin": hmf_zmin,
+     "hmf_zmax": hmf_zmax,
+     "hmf_dz": hmf_dz,
+ 
+     # Cosmology
+     "cosmology_id": cosmology_id,
+     "cosmology_name": cosmology_name,
+     
+     "progress_bar": False,
+ 
+    }
+
+    hmf = ares.physics.HaloMassFunction(hmf_analytic=False, 
+        hmf_load=False, **kwargs)
+
+    try:
+        hmf.SaveHMF(fmt=kwargs['hmf_fmt'], clobber=False, save_MAR=False)
+    except IOError as err:
+        print(err)
+    
+def HMF_PCA(cosmology_numbers=(0, 100), cosmology_name='planck_TTTEEE_lowl_lowE',
+    hmf_models=['ST'], hmf_path=None,
+    hmf_zmin_pca=5, hmf_zmax_pca=30, hmf_dz_pca=0.05,
+    hmf_logMmin_pca=7, hmf_logMmax_pca=17, hmf_dlogM_pca=0.1, 
+    hmf_zmin_out=5, hmf_zmax_out=30, hmf_dz_out=0.05, 
+    hmf_logMmin_out=7, hmf_logMmax_out=17, hmf_dlogM_out=0.01,
+    pca_nmax=20, trunc=0, trim_Mmin=8., trim_Mmax=14., plot=0):
     ''' 
     This Function creates a PCA for 3000 HMF created with the 
     fitting functions Press-Schechter, Sheth-Mo-Tormen, Tinker. 
@@ -51,30 +110,29 @@ def HMF_PCA(z_refined = 5, m_refined = 5, low = 142,
     An hdf5 file with the resulting eigenvectors, the mass/redshift
     bins, the coefficient needed to rebuilt fitting function HMFs.
     '''
-
-    fitting_functions=['PS','ST','TK']
-    vectors=[]
-    path = '/home/henri/Documents/HERA/Cosmology/HMF_tables/'
-
-    # The base file is just one of the HMFs from which we extract the
-    # mass/redshift information which we will force to be the same 
-    # for all HMFs
-    base_file = h5py.File(path + 'PS/hdf5/0.hdf5','r')
-    mass_complete = np.log10(list(base_file[('tab_M')]))[low:high]
-    redshift_complete = list(base_file[('tab_z')])[:261]
-    mass = mass_complete[::m_refined]
-    redshift = redshift_complete[::z_refined]
-
+    
     # For each fitting functions, load and process all the HMFs.
-    for fit in fitting_functions:
+    vectors=[]
+    for fit in hmf_models:
         print('Processing fitting function {}'.format(fit))
-        for i in range(1000):
-            vectors.append(HMF_loader(i, fit, path, z_refined,
-                                        m_refined, high, low))
+        for _i_ in range(cosmology_numbers[0], cosmology_numbers[1]):
+            #vec = HMF_loader(i, fit, path, z_refined, m_refined, high, low)
+            _vec_, _hmf_, _M_ = HMF_loader(hmf_model=fit, hmf_path=hmf_path,
+                cosmology_id=_i_, cosmology_name=cosmology_name,
+                hmf_zmin=hmf_zmin_pca, hmf_zmax=hmf_zmax_pca, 
+                hmf_dz=hmf_dz_pca, 
+                hmf_logMmin=hmf_logMmin_pca, hmf_logMmax=hmf_logMmax_pca, 
+                hmf_dlogM=hmf_dlogM_pca, trim_Mmin=trim_Mmin, trim_Mmax=trim_Mmax)
+
+            vectors.append(_vec_)
 
     # Does the PCA
+    t1 = time.time()
     e_val, e_vec, coefs, covariance = PCA(vectors)
-    e_vec=e_vec[:20]
+    e_vec = e_vec[:pca_nmax]
+
+    t2 = time.time()
+    print("Done with PCA in {:.2f} seconds.".format((t2 - t1)))
 
     if plot:
         plot_eigenvalues(e_val)
@@ -89,12 +147,27 @@ def HMF_PCA(z_refined = 5, m_refined = 5, low = 142,
     are 2D objects (Mass/Redshift) so we put them back
     in 2D arrays for the interpolation.
     '''
+    
+    # (z, Mh) arrays used for PCA (low-res)
+    mass = np.log10(_M_)
+    redshift = _hmf_.tab_z
+    
+    hmf_logMmin_out = max(hmf_logMmin_out, trim_Mmin)
+    hmf_logMmax_out = min(hmf_logMmax_out, trim_Mmax)
+    
+    # The arrays that we'll interpolate back to in the end.
+    mass_complete = np.arange(hmf_logMmin_out, hmf_logMmax_out + hmf_dlogM_out,
+        hmf_dlogM_out)
+    redshift_complete = np.arange(hmf_zmin_out, hmf_zmax_out + hmf_dz_out,
+        hmf_dz_out)
+    
+    # Interpolate back to finer mesh
     e_vectors_2D = []
     for j in range(len(e_vec)):
         e_vectors_2D.append([])
         for i in range(len(redshift)):
             e_vectors_2D[j].append(e_vec[j][i*len(mass):(i+1)*len(mass)])
-    
+                        
     # Creating the interpolated lists. The non-2D list is
     # going to be used for the accuracy computation
     interpolated_e_vectors_2D, interpolated_e_vectors =\
@@ -102,15 +175,13 @@ def HMF_PCA(z_refined = 5, m_refined = 5, low = 142,
                  redshift, redshift_complete, mass_complete)
     interpolated_e_vectors = np.array(interpolated_e_vectors)
 
-    # Computes the Accuracy of the PCA
-    dndm_holder = list(base_file[('tab_dndm')])[:261]
-    accuracy(plot, coefs, interpolated_e_vectors,
-                    dndm_holder, e_vec, high, low)
 
-    if trunc is not 0:
-        final_vectors = truncate(interpolated_e_vectors_2D, trunc)
-    else:
-        final_vectors = interpolated_e_vectors_2D
+    # Computes the Accuracy of the PCA
+    #dndm_holder = list(base_file[('tab_dndm')])[:261]
+    #accuracy(plot, coefs, interpolated_e_vectors,
+    #                dndm_holder, e_vec, high, low)
+
+    final_vectors = interpolated_e_vectors_2D
 
     # Fill the rest of the mass bins with really small numbers
     # for vec in final_vectors:
@@ -118,15 +189,26 @@ def HMF_PCA(z_refined = 5, m_refined = 5, low = 142,
     #         for i in range(len(base_file[('tab_M')])-high+trunc-100):
     #             red.append(-300)
 
-
-
-    hf = h5py.File('hmf_pca_z{}_M{}_truncated_{}_{}.hdf5'.format(z_refined, m_refined, high, low), 'w')
+    #hf = h5py.File('hmf_pca_z{}_M{}_truncated_{}_{}.hdf5'.format(z_refined, m_refined, high, low), 'w')
+    
+    # Add sub-str for all fitting functions
+    fit_str = ''
+    for fit in hmf_models:
+        fit_str += fit + '_'
+        
+    fit_str = fit_str[0:-1]   
+    fn_pca = _hmf_.tab_name.replace('hmf_{}'.format(_hmf_.pf['hmf_model']), 
+        'hmf_pca_{}'.format(fit_str)) 
+    
+    fn_pca = fn_pca.replace('{}_'.format(str(_i_).zfill(5)), '')
+    
+    hf = h5py.File(fn_pca, 'w')
     hf.create_dataset('e_vec', data=final_vectors)
     hf.create_dataset('tab_z', data=redshift_complete)
-    hf.create_dataset('tab_M', data=list(base_file[('tab_M')])[low:high-trunc])
-    hf.create_dataset('coefs', data=coefs[:20])
+    hf.create_dataset('tab_M', data=10**mass_complete)
+    hf.create_dataset('coefs', data=coefs[:pca_nmax])
     hf.close()
-
+    print('Wrote {}.'.format(fn_pca))
 
 
 def Zero_replacer(vector):
@@ -148,7 +230,10 @@ def Zero_replacer(vector):
 
 
 
-def HMF_loader(i, fit, path, z_refined, m_refined, high, low):
+def HMF_loader(cosmology_id, cosmology_name, hmf_model='ST', hmf_path=None,
+    hmf_zmin=4, hmf_zmax=30, hmf_dz=0.05, 
+    hmf_logMmin=4, hmf_logMmax=18, hmf_dlogM=0.1,
+    trim_Mmin=None, trim_Mmax=None):
     '''
     Load the dndm information for a HMF. Discards some data.
     Stacks the 2D information of the HMF table in a 1D list
@@ -174,18 +259,30 @@ def HMF_loader(i, fit, path, z_refined, m_refined, high, low):
     ----Returns----
     1D list of the HMF table
     '''
-    f = h5py.File(path+'{}/hdf5/{}.hdf5'.format(fit,i),'r')
-    dndm = np.array(list(f[('tab_dndm')])[:261][::z_refined])
-    dndm = Zero_replacer(dndm)
-    vector = []
-    for j in range(len(dndm)):
-        vector.append(np.log10(dndm[j][low:high][::m_refined]))
-    if not i%100:
-        print(i)
-    flat = [item for sublist in vector for item in sublist]
-    return flat
 
+    hmf = ares.physics.HaloMassFunction(hmf_model=hmf_model,
+        hmf_path=hmf_path,
+        cosmology_id=cosmology_id, cosmology_name=cosmology_name,
+        hmf_zmin=hmf_zmin, hmf_zmax=hmf_zmax, 
+        hmf_dz=hmf_dz, hmf_logMmin=hmf_logMmin,
+        hmf_logMmax=hmf_logMmax, hmf_dlogM=hmf_dlogM)
+    
+    ok = np.ones_like(hmf.tab_M)
+    if trim_Mmin is not None:
+        ok[np.argwhere(hmf.tab_M < 10**trim_Mmin)] = 0
+    if trim_Mmax is not None:
+        ok[np.argwhere(hmf.tab_M > 10**trim_Mmax)] = 0
 
+    dndm = hmf.tab_dndm
+                    
+    flat = np.log10(dndm[:,ok==1].ravel())
+    
+    M = hmf.tab_M[ok==1]
+        
+    #if not cosmology_id%100:
+    #    print(cosmology_id)
+    
+    return flat, hmf, M
 
 def plot_eigenvalues(e_val):
     '''
@@ -204,18 +301,18 @@ def plot_eigenvalues(e_val):
 
 
 
-def interpolator(pre_interp, mass,
-                 redshift, redshift_complete, mass_complete):
+def interpolator(pre_interp, logmass,
+                 redshift, redshift_complete, logmass_complete):
     '''
     Interpolates the HMFs back to the original resolution.
     Creates a sample HMF for accuracy computation
 
     ----Parameters----
     pre_interp: 2D HMF vector
-    mass: mass array of the HMF
+    logmass: mass array of the HMF
     redshift: redshift array of the HMF
     redshift_complete: list of redshifts to interpolate to
-    mass_complete: list of masses to interpolate to
+    logmass_complete: list of masses to interpolate to
 
     ----Returns----
     post_interp: interpolated 2D HMF vector
@@ -224,16 +321,16 @@ def interpolator(pre_interp, mass,
 
     sample = []
     post_interp = []
-    print(len(mass_complete))
+    print(len(logmass_complete))
     for j in range(len(pre_interp)):
         sample.append([])
         post_interp.append([])
         interp = sci.interp2d(
-            mass, redshift, pre_interp[j], kind = 'linear')
+            logmass, redshift, pre_interp[j], kind = 'linear')
 
         for k in range(len(redshift_complete)):
             post_interp[j].append([])
-            for number in mass_complete:
+            for number in logmass_complete:
                 sample[j].append(
                     float(interp(number, redshift_complete[k])))
                 post_interp[j][k].append(
@@ -324,3 +421,19 @@ def PCA(vectors):
     e_vec=list(reversed(e_vec.T))
     coefs = np.dot(e_vec, np.array(vectors).T)
     return e_val, e_vec, coefs, covariance
+    
+
+if __name__ == '__main__':
+    
+    # Set this to where the HMF tables will be.
+    path = '/Users/jordanmirocha/Dropbox/work/projects/henri_hmf/pr_for_pca/hmf_tables'
+    
+    # Uncomment this line to make a bunch of HMF tables
+    # (one fitting function at a time)
+    #generate_all_hmf_tables(hmf_path=path, hmf_model='ST',
+    #    hmf_dz=1, hmf_dlogM=0.5, cosmology_ids=(0, 100))
+    
+    # Run the PCA.
+    HMF_PCA(hmf_path=path, hmf_models=['ST'], hmf_dz_pca=1, hmf_dlogM_pca=0.5,
+        pca_nmax=25)
+    
